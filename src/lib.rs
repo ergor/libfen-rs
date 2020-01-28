@@ -58,7 +58,7 @@ pub struct Piece {
     position: Position,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Copy, Clone)]
 pub struct GameState {
     /// organization: [y][x]
     pieces: [[Option<Piece>; 8]; 8],
@@ -71,31 +71,55 @@ pub struct GameState {
     full_move_clock: i32,
 }
 
-pub fn parse(fen_str: &str) -> GameState {
+impl GameState {
+    pub fn blank() -> GameState {
+        GameState {
+            pieces: [[None; 8]; 8],
+            active_color: Color::White,
+            castling_availability: 0,
+            en_passant: None,
+            half_move_clock: 0,
+            full_move_clock: 1
+        }
+    }
+}
+
+pub fn parse(fen_str: &str) -> Result<GameState, LibFenError> {
+    do_parse(fen_str, GameState::blank(), true)
+}
+
+pub fn parse_or_default(fen_str: &str) -> GameState {
+    parse_or_else(fen_str, GameState::blank())
+}
+
+pub fn parse_or_else(fen_str: &str, defaults: GameState) -> GameState {
+    do_parse(fen_str, defaults, false).unwrap_or(defaults)
+}
+
+fn do_parse(fen_str: &str, defaults: GameState, strict: bool) -> Result<GameState, LibFenError> {
     let mut split = fen_str.split_whitespace();
+    let mut game_state = defaults;
 
-    let pieces = parse_ranks(split.next()).unwrap_or_else(|_| Vec::new());
-    let active_color = parse_active_color(split.next()).unwrap_or(Color::Black);
-    let castling_availability = parse_castling_availabilty(split.next()).unwrap_or(0);
-    let en_passant = parse_en_passant(split.next()).unwrap_or(None);
-    let half_move_clock = parse_move_clock(split.next()).unwrap_or(0);
-    let full_move_clock = parse_move_clock(split.next()).unwrap_or(0);
+    let pieces = parse_ranks(split.next());
+    let active_color = parse_active_color(split.next());
+    let castling_availability = parse_castling_availabilty(split.next());
+    let en_passant = parse_en_passant(split.next());
+    let half_move_clock = parse_move_clock(split.next());
+    let full_move_clock = parse_move_clock(split.next());
 
-    let mut game_state = GameState {
-        pieces: [[None; 8]; 8],
-        active_color,
-        castling_availability,
-        en_passant,
-        half_move_clock,
-        full_move_clock
-    };
+    let pieces = if strict { pieces? } else { pieces.unwrap_or(Vec::new()) };
 
     // organization: [y][x]
     for piece in pieces {
         game_state.pieces[piece.position.1][piece.position.0] = Some(piece);
     }
+    game_state.active_color = if strict { active_color? } else { defaults.active_color };
+    game_state.castling_availability = if strict { castling_availability? } else { defaults.castling_availability };
+    game_state.en_passant = if strict { en_passant? } else { defaults.en_passant };
+    game_state.half_move_clock = if strict { half_move_clock? } else { defaults.half_move_clock };
+    game_state.full_move_clock = if strict { full_move_clock? } else { defaults.full_move_clock };
 
-    return game_state;
+    return Ok(game_state);
 }
 
 fn parse_ranks(ranks: Option<&str>) -> Result<Vec<Piece>, LibFenError> {
@@ -123,7 +147,7 @@ fn parse_rank(y: usize, rank: &str) -> Vec<Piece> {
     let mut x = 0;
     for c in rank.chars() {
         if x >= 8 {
-            prettyprint!(format!("rank {} should have been blank but there are more pieces. ignoring them.", y), "\n");
+            prettyprint!(format!("rank {} should have been done parsing but there are more pieces. skipping them.", y), "\n");
             break;
         }
         let position = Position(x, y);
@@ -218,7 +242,7 @@ mod tests {
     #[test]
     fn empty_board() {
         let fen = "8/8/8/8/8/8/8/8 w - - 0 1";
-        let game_state = parse(fen);
+        let game_state = parse(fen).ok().unwrap();
         for y in 0..=7 {
             for x in 0..=7 {
                 test_empty!(game_state, Position(x, y));
@@ -229,7 +253,7 @@ mod tests {
     #[test]
     fn starting_position() {
         let fen = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1";
-        let game_state = parse(fen);
+        let game_state = parse(fen).ok().unwrap();
 
         test_piece!(game_state, Kind::Rook, Color::White, Position(0, 0));
         test_piece!(game_state, Kind::Knight, Color::White, Position(1, 0));
@@ -263,7 +287,7 @@ mod tests {
     #[test]
     fn e4_c5_nf3() {
         let fen = "rnbqkbnr/pp1ppppp/8/2p5/4P3/5N2/PPPP1PPP/RNBQKB1R b KQkq - 1 2";
-        let game_state = parse(fen);
+        let game_state = parse(fen).ok().unwrap();
 
         test_piece!(game_state, Kind::Rook, Color::White, Position(0, 0));
         test_piece!(game_state, Kind::Knight, Color::White, Position(1, 0));
