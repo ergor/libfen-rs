@@ -2,20 +2,34 @@
 
 //! Module for parsing Forsyth–Edwards Notation (FEN) in chess.
 
-use regex::Regex;
+use regex::{Regex};
 
-static RANK_REGEX: &str = r"([prnbqkbnrPRNBQKBNR1-8]{1,8})/?";
+const RANK_REGEX: &str = r"([prnbqkbnrPRNBQKBNR1-8]{1,8})/?";
+const EN_PASSANT_REGEX: &str = r"^([a-g])([36])$";
 
-const WHITE_KINGSIDE: i32 =  1 << 1;
-const WHITE_QUEENSIDE: i32 = 1 << 2;
-const BLACK_KINGSIDE: i32 =  1 << 3;
-const BLACK_QUEENSIDE: i32 = 1 << 4;
+const WHITE_KINGSIDE: i32 =  1 << 0;
+const WHITE_QUEENSIDE: i32 = 1 << 1;
+const BLACK_KINGSIDE: i32 =  1 << 2;
+const BLACK_QUEENSIDE: i32 = 1 << 3;
 
 
 macro_rules! prettyprint {
     ( $msg:expr, $endl:expr ) => {
         print!("fen-rs: {}{}", $msg, $endl);
     };
+}
+
+pub enum LibFenError {
+    IncompleteFen,
+    IllegalInput,
+    Generic,
+    RegexError(regex::Error),
+}
+
+impl From<regex::Error> for LibFenError {
+    fn from(regex_error: regex::Error) -> Self {
+        LibFenError::RegexError(regex_error)
+    }
 }
 
 #[derive(Copy, Clone, Eq, PartialEq, Debug)]
@@ -59,15 +73,21 @@ pub struct GameState {
 
 pub fn parse(fen_str: &str) -> GameState {
     let mut split = fen_str.split_whitespace();
-    let pieces = parse_ranks(split.next());
+
+    let pieces = parse_ranks(split.next()).unwrap_or_else(|_| Vec::new());
+    let active_color = parse_active_color(split.next()).unwrap_or(Color::Black);
+    let castling_availability = parse_castling_availabilty(split.next()).unwrap_or(0);
+    let en_passant = parse_en_passant(split.next()).unwrap_or(None);
+    let half_move_clock = parse_move_clock(split.next()).unwrap_or(0);
+    let full_move_clock = parse_move_clock(split.next()).unwrap_or(0);
 
     let mut game_state = GameState {
         pieces: [[None; 8]; 8],
-        active_color: Color::White,
-        castling_availability: 0,
-        en_passant: None,
-        half_move_clock: 0,
-        full_move_clock: 0
+        active_color,
+        castling_availability,
+        en_passant,
+        half_move_clock,
+        full_move_clock
     };
 
     // organization: [y][x]
@@ -78,26 +98,18 @@ pub fn parse(fen_str: &str) -> GameState {
     return game_state;
 }
 
-fn parse_ranks(ranks: Option<&str>) -> Vec<Piece> {
+fn parse_ranks(ranks: Option<&str>) -> Result<Vec<Piece>, LibFenError> {
+    let ranks = ranks.ok_or(LibFenError::IncompleteFen)?;
 
-    if let Some(ranks) = ranks {
-        let pattern = format!("^{}$", RANK_REGEX.repeat(8));
-        //println!("pattern: {}", pattern);
-        let pattern = pattern.as_str();
-        let re = Regex::new(pattern).unwrap();
-        let cap = re.captures(ranks);
-        //println!("captures: {:?}", cap);
-        if let Some(cap) = cap {
-            return cap.iter()
-                .enumerate()
-                .skip(1) // skip capture[0], because it is the whole match
-                .flat_map(|(cap_idx, re_match)| parse_rank(7-(cap_idx-1), re_match.unwrap().as_str()))
-                .collect();
-        }
-    }
-
-    prettyprint!("pieces could not be parsed; returning empty set.", "\n");
-    return Vec::new();
+    let pattern = format!("^{}$", RANK_REGEX.repeat(8));
+    let pattern = pattern.as_str();
+    let re = Regex::new(pattern)?;
+    let cap = re.captures(ranks).ok_or(LibFenError::Generic)?;
+    return Ok(cap.iter()
+        .enumerate()
+        .skip(1) // skip capture[0], because it is the whole match
+        .flat_map(|(cap_idx, re_match)| parse_rank(7-(cap_idx-1), re_match.unwrap().as_str()))
+        .collect());
 }
 
 
@@ -134,10 +146,61 @@ fn parse_rank(y: usize, rank: &str) -> Vec<Piece> {
     return pieces;
 }
 
+fn parse_active_color(input: Option<&str>) -> Result<Color, LibFenError> {
+    let input = input.ok_or(LibFenError::IncompleteFen)?;
+    match input {
+        "w" => Ok(Color::White),
+        "b" => Ok(Color::Black),
+        _ => Err(LibFenError::IllegalInput)
+    }
+}
+
+fn parse_castling_availabilty(input: Option<&str>) -> Result<i32, LibFenError> {
+    let input = input.ok_or(LibFenError::IncompleteFen)?;
+
+    let mut value = 0;
+    if let Some(_) = input.find('K') {
+        value |= WHITE_KINGSIDE;
+    }
+    if let Some(_) = input.find('k') {
+        value |= BLACK_KINGSIDE;
+    }
+    if let Some(_) = input.find('Q') {
+        value |= WHITE_QUEENSIDE;
+    }
+    if let Some(_) = input.find('q') {
+        value |= BLACK_QUEENSIDE;
+    }
+    return Ok(value);
+}
+
+fn parse_en_passant(input: Option<&str>) -> Result<Option<Position>, LibFenError> {
+    let input = input.ok_or(LibFenError::IncompleteFen)?;
+
+    let re = Regex::new(EN_PASSANT_REGEX)?;
+    let cap = re.captures(input).ok_or(LibFenError::Generic)?;
+
+    let file = cap.get(1).ok_or(LibFenError::Generic)?;
+    let rank = cap.get(2).ok_or(LibFenError::Generic)?;
+
+    let x = file.as_str().chars().next()
+        .map(|c| ((c as u8) - ('a' as u8)) as usize)
+        .ok_or(LibFenError::Generic)?;
+    let y = rank.as_str().chars().next()
+        .map(|c| char::to_digit(c, 10).unwrap() as usize)
+        .ok_or(LibFenError::Generic)?;
+
+    return Ok(Some(Position(x, y)));
+}
+
+fn parse_move_clock(input: Option<&str>) -> Result<i32, LibFenError> {
+    let input = input.ok_or(LibFenError::IncompleteFen)?;
+    input.parse::<i32>().map_err(|_| LibFenError::IllegalInput)
+}
 
 #[cfg(test)]
 mod tests {
-    use crate::{parse, Piece, Kind, Color, Position, GameState};
+    use crate::{parse, Kind, Color, Position};
 
     macro_rules! test_piece {
         ( $game_state:expr, $kind:expr, $color:expr, $position:expr ) => {
