@@ -5,12 +5,12 @@
 use regex::{Regex};
 
 const RANK_REGEX: &str = r"([prnbqkbnrPRNBQKBNR1-8]{1,8})/?";
-const EN_PASSANT_REGEX: &str = r"^([a-g])([36])$";
+const EN_PASSANT_REGEX: &str = r"^-|([a-g])([36])$";
 
-const WHITE_KINGSIDE: i32 =  1 << 0;
-const WHITE_QUEENSIDE: i32 = 1 << 1;
-const BLACK_KINGSIDE: i32 =  1 << 2;
-const BLACK_QUEENSIDE: i32 = 1 << 3;
+pub const WHITE_KINGSIDE: i32 =  1 << 0;
+pub const WHITE_QUEENSIDE: i32 = 1 << 1;
+pub const BLACK_KINGSIDE: i32 =  1 << 2;
+pub const BLACK_QUEENSIDE: i32 = 1 << 3;
 
 
 macro_rules! prettyprint {
@@ -49,26 +49,26 @@ pub enum Kind {
 }
 
 #[derive(Copy, Clone, Eq, PartialEq, Debug)]
-pub struct Position(usize, usize);
+pub struct Position(pub usize, pub usize);
 
 #[derive(Copy, Clone, Debug)]
 pub struct Piece {
-    kind: Kind,
-    color: Color,
-    position: Position,
+    pub kind: Kind,
+    pub color: Color,
+    pub position: Position,
 }
 
 #[derive(Debug, Copy, Clone)]
 pub struct GameState {
     /// organization: [y][x]
-    pieces: [[Option<Piece>; 8]; 8],
-    active_color: Color,
-    castling_availability: i32,
-    en_passant: Option<Position>,
+    pub pieces: [[Option<Piece>; 8]; 8],
+    pub active_color: Color,
+    pub castling_availability: i32,
+    pub en_passant: Option<Position>,
     /// This is the number of halfmoves since the last capture or pawn advance.
-    half_move_clock: i32,
+    pub half_move_clock: i32,
     /// The number of the full move. It starts at 1, and is incremented after Black's move
-    full_move_clock: i32,
+    pub full_move_clock: i32,
 }
 
 impl GameState {
@@ -204,17 +204,22 @@ fn parse_en_passant(input: Option<&str>) -> Result<Option<Position>, LibFenError
     let re = Regex::new(EN_PASSANT_REGEX)?;
     let cap = re.captures(input).ok_or(LibFenError::Generic)?;
 
-    let file = cap.get(1).ok_or(LibFenError::Generic)?;
-    let rank = cap.get(2).ok_or(LibFenError::Generic)?;
+    let file = cap.get(1);
+    let rank = cap.get(2);
 
-    let x = file.as_str().chars().next()
-        .map(|c| ((c as u8) - ('a' as u8)) as usize)
-        .ok_or(LibFenError::Generic)?;
-    let y = rank.as_str().chars().next()
-        .map(|c| char::to_digit(c, 10).unwrap() as usize)
-        .ok_or(LibFenError::Generic)?;
+    if file.is_some() && rank.is_some() {
+        let x = file.unwrap().as_str().chars().next()
+            .map(|c| ((c as u8) - ('a' as u8)) as usize)
+            .ok_or(LibFenError::Generic)?;
+        let y = rank.unwrap().as_str().chars().next()
+            .map(|c| char::to_digit(c, 10).unwrap() as usize)
+            .ok_or(LibFenError::Generic)?;
 
-    return Ok(Some(Position(x, y)));
+        return Ok(Some(Position(x, y)));
+    }
+    else {
+        return Ok(None);
+    }
 }
 
 fn parse_move_clock(input: Option<&str>) -> Result<i32, LibFenError> {
