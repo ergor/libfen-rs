@@ -19,6 +19,7 @@ macro_rules! prettyprint {
     };
 }
 
+#[derive(Debug)]
 pub enum LibFenError {
     IncompleteFen,
     IllegalInput,
@@ -82,6 +83,10 @@ impl GameState {
             full_move_clock: 1
         }
     }
+}
+
+pub fn print_error(error: LibFenError) {
+    prettyprint!(format!("operation failed. error: {:?}", error), "\n");
 }
 
 pub fn parse(fen_str: &str) -> Result<GameState, LibFenError> {
